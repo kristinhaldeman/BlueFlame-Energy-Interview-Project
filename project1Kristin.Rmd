@@ -1,0 +1,546 @@
+---
+title: "Project1"
+author: "Kumar Aiyer"
+date: "01/15/2016"
+output: html_document
+---
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+Load and transform the data for the analysis
+
+```{r}
+options(width=120)
+#
+# write a function geteloaddatadf() - you will assign the return value to eloaddf
+# in the function do the following
+# 1. load the electric load data from elecloaddata.xlsx
+# you are not allowed to convert to .csv. Find an appropriate R package that can read .xlsx files and load
+# the data in a dataframe called eloaddf. The columns should be dates, kwh, kwVAR
+#
+# some notes on the data
+# the file has 15 min interval data from 1/1/2014 to 12/30/2015
+# when you import the data, the first column of your dataset should be dates in POSIXct format
+# HINT: use the strptime and as.POSIX.ct functions to form the eloaddf$dates
+#
+
+
+###NOTE:
+###This file requires all data files to be located in current working directory.
+
+####FUNCTION: getloaddatadf##############################
+####INPUTS:       electrical load data excel file is in working directory, 'elecloaddata.xlsx'
+####OUTPUTS:      data from electrical load data file
+####Packages:     xlsx
+####Description:  Reads data in from the electrical load data file. Columns are dates, time        #                 (in 15 minute intervals), kwh, and kwVAR
+#########################################################
+getloaddatadf <- function() {
+  require(xlsx)
+  df = read.xlsx2("elecloaddata.xlsx",1,
+                  colClasses=c(rep("character",2), rep("numeric",3)),
+                  stringsAsFactors=FALSE)                             #read in worksheet
+  return(df)                                                          #return workseet data
+}
+
+eloaddf = getloaddatadf()                        #read in electrical load data
+names(eloaddf) = c("dates","time","kwh","kwVAR")
+                                                 ######## begin editing date data
+eloaddf$dates = ifelse(nchar(eloaddf$dates)==5,    #first: add beginning 0 if needed so all
+                paste("0",eloaddf$dates,sep=""),   #dates have 6 characters, same for time haveing
+                eloaddf$dates)                     #having 4 digits
+eloaddf$time[nchar(eloaddf$time)==2] = paste("00",eloaddf$time[nchar(eloaddf$time)==2],sep="")
+eloaddf$time[nchar(eloaddf$time)==3] = paste("0",eloaddf$time[nchar(eloaddf$time)==3],sep="")
+                                                 
+                                                   #second: convert to POSIXct
+eloaddf$dates = as.POSIXct(strptime(paste(eloaddf$dates, eloaddf$time),"%m%d%y %H%M"))    
+                                                 ######## #end editing date data
+
+###########################################################################################
+# write a function getweatherdf() - you will assign the return value to weatherdf
+# 2. Next load the weather data from NOAA into a data frame weatherdf. The data is in 1874606932872dat.txt
+# This is 1 hour interval data for a specific weather station close to
+# the location of the site from which electric load data was obtained
+#
+# you need to use fixed width parsing to read the data into a data frame.
+# add a column called dates to the dataframe similar to #1 above
+#
+
+
+####FUNCTIOn: getweatherdf##############################
+####INPUTS:       read in noaa weather data
+####OUTPUTS:      weather data dataframe
+####Packages:     
+####Description:  Reads data in from the noaa weather data file. Columns are listed in
+#                 data file. 
+#########################################################
+
+getweatherdf <- function() {
+  infilename = list.files(getwd(),pattern="*dat.txt")     #getting the correct weather data file
+  
+  columnfilename = list.files(getwd(),pattern="doc.txt")  #parsing weather data information file
+  columnfile = readLines(columnfilename)                  #in order to get column widths
+  columnwidths = vector()
+  for (iline in 9:50) {
+    theline = columnfile[iline]
+    if (grepl("[0123456789]+-[0123456789]+",theline))  {   #using regular expressions
+      startcol = as.numeric(gsub("([0123456789]{1,3})(-)([0123456789]{1,3})(.*)","\\1",theline))
+      endcol = as.numeric(gsub("([0123456789]{1,3})(-)([0123456789]{1,3})(.*)","\\3",theline))
+      columnwidths = c(columnwidths,endcol-startcol+2)     #there is an extra space between each variable
+    }
+  }
+  columnwidths[length(columnwidths)] = columnwidths[length(columnwidths)] - 1 #last variable doesn't have extraspace
+  
+  #replace 10 with two 5s, the noaa description file put temp and dewpoint together in the same column. Why?? it makes no sense
+  whichcol = which(columnwidths==10)
+  columnwidths = c(columnwidths[1:14],5,5,columnwidths[16:length(columnwidths)])
+  
+  df = read.fwf(infilename,columnwidths,header=FALSE,skip=1)
+  
+  return(df)
+}
+
+weatherdf <- getweatherdf()
+names(weatherdf) = c("STN","WBAN","RawDate","dir","speed","clg","skc","l","m","h","vsb","mw","aw","w","tempmean","dewpoint","slp","alt","stp","tempmax","tempmin","pcp01","pcp06","pcp24","pcpxx","sd")
+
+weatherdf$dates = as.POSIXct(strptime(weatherdf$RawDate,"%Y%m%d%H%M",tz=""))    
+                                                 
+
+
+
+############################################################################################
+# write a funcion getbillsdf() - you will assign the return value to billsdf
+# 3. Next load the bill data from billdata.xlsx
+# this data is monthly and carefully note the start and end date of each billing period. 
+# name the fields of the dataframe as
+# billdate, billstartdt, billenddt, kwh, mindemandkw, actualdemandkw, custcharge, 
+# distchrgkw, mttkwh, tbckwh,nugckwh, sbckwh, rggieekwh, deliverykwh, 
+# totdeliverychrg, supplychrg, totalchrg
+#
+
+
+
+####FUNCTIOn: getbillsdf##############################
+####INPUTS:       bill data excel file is in working directory, 'billdata.xlsx'
+####OUTPUTS:      data from ebill data file
+####Packages:     xlsx
+####Description:  Reads data in from the bill data file. Columns are listed in
+#                 excel file. column names are renamed as requested in billdf
+#########################################################
+getbillsdf <- function() {
+  require(xlsx)
+  df = read.xlsx2("billdata.xlsx",1,stringsAsFactors=FALSE,
+                 colClasses=c(rep("Date",3), rep("numeric",14)))  #read in worksheet
+  return(df)                                                      #return workseet data
+}
+
+billdf = getbillsdf()
+names(billdf) = c("billdate", "billstartdt", "billenddt", "kwh", "mindemandkw",
+                  "actualdemandkw", "custcharge", "distchrgkw", "mttkwh", "tbckwh",
+                  "nugckwh", "sbckwh", "rggieekwh", "deliverykwh", "totdeliverychrg",
+                  "supplychrg", "totalchrg")
+billdf = billdf[-13,]
+
+```
+
+We now have 3 data sets
+
+1. Electric load data in 15 min interval
+2. Weather data in 60 min interval
+3. Bill data monthly
+
+Lets do some simple analysis
+
+Display the monthly load profile
+
+```{r}
+# display a summary of the electric load data eloaddf$kwh by summarizing it by year, month and total kwh over each month
+# your answer should display 24 rows without the header
+
+
+eloaddf$YearMonth = strftime(eloaddf$dates,format = "%Y-%m")
+aggregate(kwh ~ YearMonth, eloaddf, FUN=sum)
+```
+
+Now let us do some plotting of the load data
+
+```{r}
+# form a dataframe called eloadhrdf with two columns dates, kwh
+# this dataframe sums the 15min kwh in the eloaddf to hourly data
+# next create a plot frame with two panels side by side
+# On the left panel show a heat map of kwh data for 2014 with x-axis as months and y-axis as hour of the day (1 to 24). use subsetting of the data frame rather than copying the data into yet another data frame
+# On the right panel show a heat map of kwh data for 2015 with x-axis as months and y-axis as hour of the day (1 to 24). use subsetting of the data frame rather than copying the data into yet another data frame
+
+
+########packages required!######################################################################
+require(RColorBrewer)
+require(grDevices)
+
+tempcolors = brewer.pal(11,"RdYlGn")  #get colors to use in heatmap. will be using a green to red from low to high color pallete
+tempcolors = tempcolors[11:1]
+pc.pallete = colorRampPalette(tempcolors)
+plotcolors = pc.pallete(100)
+rm(tempcolors)
+
+                                      ####first create eloadhrdf
+                                      ####This data frame summarizes eloaddf into hourly data 
+                                      ####two columns in dataset are datas and kwh
+eloadhrdf = aggregate(kwh ~ strftime(eloaddf$dates,format = "%Y") + strftime(eloaddf$dates,format = "%m") + strftime(eloaddf$dates,format = "%H"),eloaddf,FUN=sum)
+names(eloadhrdf)[1:3] = c("year","month","hour")
+
+###########PROGRAMMING NOTES####################################################################
+##normally I would leave eloadhrdf with 4 columns as the aggregate function outputed, one for year, 
+##one for month. one for hour, and one for the total kwh for that time interval. This would make it 
+##easier to work with and cleaner looking. However, the specifications call for 2 columns only.
+##the below code makes it so.  Also, I would create a two dimensional matrix instead to use with one 
+##of the many heatmap functions, especially d3heatmap which allows interaction in Rmarkdown
+eloadhrdf$dates = as.POSIXct(strptime(paste(paste(eloadhrdf$month, "01", eloadhrdf$year,sep=""), paste(eloadhrdf$hour,"00",sep="")),format="%m %d %Y %H %M"))    
+eloadhrdf = eloadhrdf[,-c(1:3)]
+
+                                                 ######## #end editing date data
+
+
+                                      ####second: create the heatmap with x-axis as months and 
+                                      ####y-axis for hour of the day. plot on left summarizes
+                                      #### 2014 data and the plot on right shows 2015 data
+opar = par()
+
+kwhmins = min(c(9268.704,8751.48)) #2014 and 2015. found by iterating through the df first
+kwhmaxs = max(c(22619.9,22776.7)) #2014 and 2015
+layout(matrix(c(1,2,3,3),2,2,byrow=TRUE),heights=c(3,1))
+par(mar=c(4,4,2,.5),oma=c(0,0,0,0))
+
+for (iplot in 1:2) {                                           #begin left/right plot (year 14/15)
+  plottitle = ifelse(iplot==1,"2014","2015")
+  plottitle = paste(plottitle,"kwh")
+  plot(NA,xlab="months",ylab="hours",
+           main=plottitle,ylim=c(0,24),xlim=c(0,12))
+           #####PROGRAMMING NOTE: while subsetting for each variable in each loop like this is not
+                                 #necessary for speed in a df with only 576 rows, I have frequently
+                                 #worked with large datasets (100k+ rows) requiring such methods
+  yearsubset = eloadhrdf[strftime(eloadhrdf$dates,format="%Y")==ifelse(iplot==1,"2014","2015"),]
+                                                            
+  for(irow in 1:12) {                                           #begin ith row of heatmap plot (months)
+    monthsubset = yearsubset[as.numeric(strftime(yearsubset$dates,format="%m"))==irow,]
+    for (icol in 1:24) {                                        #Begin ith col of heatmap (hours)
+      
+      #finding min and max of data to normalize it. Ran this code first to find these numbers.
+      #commented out for plotting
+#       tempkwh = monthsubset[as.numeric(strftime(monthsubset$dates,format="%H"))==icol-1,]$kwh
+#       if (irow == 1 && icol ==1) {                               
+#         mindata = tempkwh    
+#         maxdata = tempkwh
+#       } else {                                                   
+#         mindata = ifelse(tempkwh<mindata,tempkwh,mindata)
+#         maxdata = ifelse(maxdata<tempkwh,tempkwh,maxdata)
+#       }
+      
+      #plot the rectangle representing the heatmap kwh value for this hour,month,year combination
+      normalizednum = ((monthsubset[as.numeric(strftime(monthsubset$dates,format="%H"))==icol-1,]$kwh - kwhmins)/(kwhmaxs-kwhmins))*100
+      if (normalizednum < 1) { #decimals 0-1
+        normalizednum = 1
+      }
+      
+      rect(irow-1,icol-1,irow,icol,col=plotcolors[normalizednum],border=NA)
+      
+      rm(normalizednum)
+    }                                                           #end ith col of heatmap (hours)
+    rm(monthsubset)
+  }                                                             #end ith row of heatmap (months)
+  rm(yearsubset)
+}                                                               #end left/right plot (year 14/15)
+
+#plot the colorbar legend
+par(mar=c(4,4,3,.5))
+plot(NA,xaxt="n",yaxt="n",main="",xlim=c(0,100),ylim=c(0,1),xlab="kwh",ylab="")
+for (irow in 1:100){
+  rect(irow-1,0,irow,1,col=plotcolors[irow],border=NA)
+}
+labelsvec = round(approx(y=c(kwhmins,kwhmaxs),x=c(1,5),xout=1:5)$y) #linear interpolate to get tick mark labels
+axis(side=1,at=c(0,25,50,75,100),labels=labelsvec,xlab="kwh")
+
+
+par(opar)
+
+```
+Note that the tickmarks are labeled at the end (either top or right) of the box that they refer to.
+
+This data shows us pretty much exactly what we would expect from energy usage. The people at this location are active from approximately 8 to midnight. The highest usage is during the summer months, particularly October (from personal experience I know that my electric bill increases by 400% in the summer when I am using the air conidtioning all the time, in particular, last September and October). There are several interesting differences between the two years. For one, 2014 experiences a much more gradual increase in energy usage from April until October, while in 2015, the energy usage was more homogenous throughout the summer months. However, 2015 saw a much higher energy usage throughout October, November, and even December compared to 2014.
+
+We plot the weather data using boxplot to explore the variation in temperature graphically
+
+```{r}
+# plot the weather data. Use boxplots in ggplot2 with month on the x-axis and temperature in y-axis
+require(ggplot2)
+
+temp = cbind.data.frame(as.numeric(as.character(weatherdf$tempmean)), strftime(weatherdf$dates,format="%m"), strftime(weatherdf$dates,format="%Y"))
+names(temp)=c("temp","month","year")
+ggplot(na.omit(temp),aes(x=month,y=temp,fill=year)) + geom_boxplot() + labs(x="Month",y="Mean Temperature (F)")
+rm(temp)
+
+```
+This looks like a typical North American Weather pattern (most likely coastal). Note that we get a small amount of 2013 data, since even though the dates are from 2014, I let Posixct know that the NOAA data's timezone is GMT
+
+We are now ready to build a simple predictive model.
+
+```{r}
+#create a dataframe with hourly interval data inside your function by 
+# combining selective columns from eloadhrdf and weatherdf
+# your dataframe should be called modeldatadf and the columns should be dates, year, month, hrofday, temp, kwh
+#
+
+##################################Function:getmodeldatadf############################
+#Description: gather data from weatherdf dataset and eloadhrdf dataset to get a df with columns dates,
+#year, month, hour of day, temp, and kwh
+#Inputs:weatherdf, eloadhrdf
+#outputs: a df
+####################################################################################
+
+
+
+weatherdf$tempmean = as.numeric(as.character(weatherdf$tempmean)) #starts off as factor
+
+getmodeldatadf <- function() {
+  tempmat = as.data.frame(matrix(ncol=5,nrow=24*24))
+  names(tempmat) = c("year","month","hour","temp","kwh")
+  irow = 1
+  for (iyear in 2014:2015) {                                  #begin year loop
+    yearsubset.eload = eloadhrdf[as.numeric(strftime(eloadhrdf$dates,format="%Y"))==iyear,]
+    yearsubset.weather = weatherdf[as.numeric(strftime(weatherdf$dates,format="%Y"))==iyear,]
+    
+    for (imonth in 1:12) {                                    #begin month loop
+      monthchar = ifelse(imonth<10,paste("0",as.character(imonth),sep=""),as.character(imonth))
+      monthsubset.eload = yearsubset.eload[as.numeric(strftime(yearsubset.eload$dates,format="%m"))==imonth,]
+      monthsubset.weather = yearsubset.weather[as.numeric(strftime(yearsubset.weather$dates,format="%m"))==imonth,]
+      
+      for (ihour in 0:23) {                                 #begin hour loop
+        hourchar = ifelse(ihour<10,paste("0",as.character(ihour),sep=""),as.character(ihour))
+        
+        hoursubset.weather = monthsubset.weather[strftime(monthsubset.weather$dates,format="%H")==hourchar,]
+        
+       
+        tempmat[irow,]$year = iyear
+        tempmat[irow,]$month = imonth
+        tempmat[irow,]$hour = hourchar
+        tempmat[irow,]$temp = mean(hoursubset.weather$tempmean,na.rm=TRUE)
+        tempmat[irow,]$kwh = monthsubset.eload[strftime(monthsubset.eload$dates,format="%H")==hourchar,]$kwh
+        
+        
+        irow = irow + 1
+        rm(hoursubset.weather)
+        
+      }                                                     #end hour loop
+      rm(monthsubset.eload,monthsubset.weather)
+    }                                                       #end month loop
+    rm(yearsubset.eload,yearsubset.weather)
+  }                                                         #end year loop
+  tempmat$monthchar = ifelse(tempmat$month<10,paste("0",as.character(tempmat$month),sep=""),as.character(tempmat$month))
+   tempmat$dates = as.POSIXct(strptime(paste(paste( tempmat$monthchar,"01", as.character(tempmat$year),sep=""), paste(tempmat$hour,"00",sep="")),format="%m%d%Y %H%M"))  
+   #its difficult to initialize a dataframe with a date column in it. easier just to add it on at the end
+   tempmat = tempmat[,-6]
+  return(tempmat)
+}                                                           #end function
+
+modeldatadf = getmodeldatadf()
+modeldatadf$hour = as.numeric(modeldatadf$hour)
+
+#
+# write a simple function called predmodel. the model object should be the return parameter
+# pass in the appropriate data frames.
+# 
+# you should fit a GLM with the following specification kwh ~ month + hrofday + temp
+# your model should only use 2014 data for your prediction model
+#
+# use the summary function and display the results of the function
+```
+
+First I wanted to create a scatter plot matrix so I could see how the variables related to one another. This will allow me to determine what kind of model I should expect to be making.
+
+```{r}
+cor(modeldatadf[modeldatadf$year==2014,2:5])
+pairs(modeldatadf[modeldatadf$year==2014,2:5],main="2014 data")
+```
+
+After looking at these, I see that I will probably need to look into polynomial variables in the equations. I also see that there is little correlation in the predictor variables, so I don't have to worry about multicollinearity.
+
+```{r}
+
+predmodel1 <- function() {
+  temp1 = glm(kwh ~ temp + month + hour, data=modeldatadf[modeldatadf$year==2014,]) #note that the I() function allows me to use ^ in an R formula
+}
+predmodel2 <- function() {
+  temp2 = glm(kwh ~ temp + month + hour + I(hour^2)+ I(hour^3) + I(hour^4),  data=modeldatadf[modeldatadf$year==2014,]) #note that the I() function allows me to use ^ in an R formula
+}
+
+mod1 = predmodel1()
+mod2 = predmodel2()
+
+summary(mod1)
+summary(mod2)
+
+###lets look at some diagnostics plots
+layout(matrix(c(1,2,3,4),2,2))
+plot(mod1)
+plot(mod2)
+par(opar)
+```
+
+
+The residual plots indicate that the errors are approximately normally distributed, but the residuals vs fitted and the leverage plot tell us that there are outliers and heteroscedacity in our model. Using a weighted or robust regression might improve our model. In Model 1, the model for kwh ~ month + hrofday + temp, we see that all variables are significant; month, hour, and temperature all have an effect on the energy used. We see that model 2, which introduces the polynomial terms for hour, also has all of its terms significant. This gives us a lower AIC than for model 1, and indicates a better fitting model. 
+
+ 
+```{r}
+#
+# use the dataframe modeldatadf
+# split it into training and testing data sets based on 2014 data for training and 2015 data for testing
+# Use the GBM algorithm in the caret package in R to train and validate the model.
+# You have free reign to display and explain your results graphically
+#
+#
+require(caret)
+set.seed(998)
+traindata = subset(modeldatadf,year==2014)
+testdata = subset(modeldatadf,year==2015)
+
+gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9),
+                        n.trees = (1:30)*50,
+                        shrinkage = 0.1,
+                        n.minobsinnode = 20)
+
+set.seed(825)
+
+fitControl <- trainControl(method = "repeatedcv",number = 10,repeats = 10) #10 fold cross validation (number = 10) with 10 repeats (repeats = 10)
+
+gbmFit <- train(kwh ~ ., data = traindata[,2:5],
+                 method = "gbm",
+                 trControl = fitControl,
+                 verbose = FALSE,
+                 ## Now specify the exact models 
+                 ## to evaluate:
+                 tuneGrid = gbmGrid)
+gbmFit
+
+ggplot(gbmFit)
+
+trellis.par.set(caretTheme())
+plot(gbmFit,metric = "RMSE", plotType = "level", scales = list(x=list(rot=90)))
+
+```
+
+Lets now compare the predicted model for 2015 with the bill data kwh!
+
+```{r}
+#
+# run your machine learning model and create a data frame of dates, kwh for 1hr interval data for 2015. note you
+# may need to include the last few days of 2014 in your dataset due to the billing dates in January (see billdata.xlsx)
+# call your data frame pred2015df.
+# now for each of the 12 rows (billing periods) in the billsdf, sum the kwh for the date range in each of the rows from pred2015df for the corresponding start and end of billing in billsdf 
+# create a resultsdf which has billdate, predkwh (from pred2015df), actualkwh (from billsdf)
+# display the results
+
+pred2015df <- as.data.frame(cbind(predict(gbmFit, newdata=testdata[,2:5]),
+                    testdata$month,testdata$hour))
+names(pred2015df) = c("kwh.predicted","month","hour")
+
+#adding dates variable
+pred2015df$monthchar = ifelse(pred2015df$month<10,paste("0",as.character(pred2015df$month),sep=""),as.character(pred2015df$month))
+pred2015df$hourchar = ifelse(pred2015df$hour<10,paste("0",as.character(pred2015df$hour),sep=""),as.character(pred2015df$hour))
+   pred2015df$dates = as.POSIXct(strptime(paste(paste( pred2015df$monthchar,"012015",sep=""), paste(pred2015df$hourchar,"00",sep="")),format="%m%d%Y %H%M"))  
+
+   pred2015df = pred2015df[,-c(4:5)]
+   
+```
+   
+   
+Now create results df. This will be a little complicated since we have month and hour values, but the bill data is for months that do not follow calendar months. Therefore we will assume that each day in a month inherits a fraction of the monthly value. (1/31 for January, 1/28 for February, etc). We can then sum the days as required. For the days in December of 2014, we will use the actual values.
+
+```{r}
+monthnums = c(31,28,31,30,31,30,31,31,30,31,30,31) 
+   
+   pred2015df$daykwh = NA
+for (imonth in 1:12) {
+  pred2015df[pred2015df$month==imonth,]$daykwh = pred2015df[pred2015df$month==imonth,]$kwh/monthnums[imonth]
+}
+   
+resultsdf <- as.data.frame(matrix(nrow=12,ncol=3))
+names(resultsdf) = c("billdate","predkwh","actualkwh")
+
+for (imonth in 1:12) {
+  startday = as.numeric(strftime(billdf[imonth,]$billstartdt,format="%d"))
+  endday = as.numeric(strftime(billdf[imonth,]$billenddt,format="%d"))
+  if (imonth == 1) { #get data from eloaddf for actual numbers
+    prevmonth = sum(eloaddf[as.numeric(strftime(eloaddf$dates,format = "%Y")==2014)&
+                              as.numeric(strftime(eloaddf$dates,format = "%m")==12)&
+                              as.numeric(strftime(eloaddf$dates,format = "%d")>19),]$kwh,
+                    na.rm=TRUE)
+  } else {
+    #multiplying number of days in billing cycle from previous month, with  monthly kwh numbers
+    prevmonth = sum(pred2015df[pred2015df$month==(imonth-1),]$daykwh)*((monthnums[imonth-1])-startday+1)
+    
+    
+  }
+  
+  #multiplying number of days in billing cycle from this month, with  monthly kwh numbers
+    thismonth = sum(pred2015df[pred2015df$month==(imonth),]$daykwh)*(endday)
+      #putting it all into the df
+    resultsdf[imonth,]$billdate = billdf[imonth,]$billdate
+    resultsdf[imonth,]$predkwh = prevmonth + thismonth
+    resultsdf[imonth,]$actualkwh = billdf[imonth,]$kwh
+  
+  
+}
+
+resultsdf
+```
+After seeing an order of magnitude difference bewtween the predicted and actual values, I looked into what the problem was. There seems to be some discrepancy in the data since summing kwh for December 20,2014-December 31,3015 coming from the elecload excel file is:
+```{r} 
+sum(eloaddf[as.numeric(strftime(eloaddf$dates,format = "%Y")==2014)&
+                               as.numeric(strftime(eloaddf$dates,format = "%m")==12)&
+                               as.numeric(strftime(eloaddf$dates,format = "%d")>19),]$kwh,
+                               na.rm=TRUE) 
+                    
+```
+which is already twice as big as the total month for billing cycle from Dec 20 2014 to Jan 28 2015,which came from the billing excel file.:
+```{r} 
+billdf[1,1:4]
+```
+I manually validated the numbers that I imported in the dataframes in R with their raw excel files, and there was no discrepancy there. Maybe the two excel sheets are from two different locations? Maybe the units are not the same? Maybe the variable names in billdf are not descriptive enough for me to interpret correctly? I compiled another example of this discrepancy by gathering both sets of data for the December 2015 billing cycle (data from both the electric load and from the billing excel files), into one excel file entitled `December 2015 aggregate billing and electric load data.xlsx1` in order to more easily look at this. 
+
+Therefore,  I will aggregate kwh daily for 2015 from the eloaddf, and compare the results from our model from that. This also makes our job easier by being able to compare calendar months from each dataset. 
+
+```{r} 
+eloadmonthdf = aggregate(kwh ~ strftime(eloaddf$dates,format = "%Y") + strftime(eloaddf$dates,format = "%m"),eloaddf,FUN=sum)
+names(eloadmonthdf) = c("year","month","kwh")
+
+resultsdf2 <- as.data.frame(matrix(nrow=12,ncol=3))
+names(resultsdf2) = c("month","predkwh","actualkwh")
+
+for (imonth in 1:12) {
+
+  #multiplying number of days in billing cycle from this month, with  monthly kwh numbers
+    thismonth = sum(pred2015df[pred2015df$month==(imonth),]$kwh)
+      #putting it all into the df
+    resultsdf2[imonth,]$month= imonth
+    resultsdf2[imonth,]$predkwh = thismonth
+    resultsdf2[imonth,]$actualkwh = eloadmonthdf[as.numeric(eloadmonthdf$year==2015)&as.numeric(eloadmonthdf$month)==imonth,]$kwh
+  
+  
+}
+
+resultsdf2$error = resultsdf2$predkwh -resultsdf2$actualkwh 
+resultsdf2$percenterror = (resultsdf2$predkwh -resultsdf2$actualkwh )/resultsdf2$actualkwh *100
+
+resultsdf2
+
+ggplot(data=resultsdf2,aes(x=month,y=percenterror)) + geom_line(color="red",linetype="dashed") + geom_point(color="red",size=4,shape=21,fill="white") + xlab("Month") + ylab("Percent Error") + ggtitle("Percent Error by Month") + geom_hline(aes(yintercept=0)) + scale_x_continuous(breaks=c(1:12))
+
+
+```
+
+Conclusions: our model is ok, since there can be more than a 10% difference between the actual and predicted values. Having more years of electric load data would probably help our model a lot. 
+
+
+This completes this little exploration of energy load data. Thank You!
+
+
